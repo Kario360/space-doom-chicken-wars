@@ -364,9 +364,18 @@
       o.start(t); o.stop(t + dur);
     } catch (e) {}
   }
+  // Throttle the impact "tick" so rapid/piercing fire on a boss can't stack into
+  // a harsh sawtooth buzz — at most one hit blip every ~50ms, with a softer tone.
+  let lastHitT = -1e9;
+  function hitSfx() {
+    const now = performance.now();
+    if (now - lastHitT < 50) return;
+    lastHitT = now;
+    beep(220, 0.05, "triangle", 0.04, 130);
+  }
   const sfx = {
     shoot:  () => beep(880, 0.07, "square", 0.04, 420),
-    hit:    () => beep(180, 0.08, "sawtooth", 0.05, 90),
+    hit:    hitSfx,
     pop:    () => beep(520, 0.12, "triangle", 0.07, 140),
     power:  () => beep(660, 0.18, "sine", 0.08, 1320),
     hurt:   () => beep(120, 0.3, "sawtooth", 0.1, 50),
@@ -719,7 +728,8 @@
 
     } else if (wt.id === "laser") {
       // Fast piercing beams — thin, fires twin columns that punch through.
-      beep(1200, 0.05, "sawtooth", 0.03, 700);
+      // Smooth triangle "pew" (was a sawtooth that buzzed under rapid autofire).
+      beep(1320, 0.045, "triangle", 0.025, 760);
       const cols = lvl >= 4 ? 3 : lvl >= 2 ? 2 : 1;
       const spacing = 12;
       const start = -(cols - 1) / 2;
