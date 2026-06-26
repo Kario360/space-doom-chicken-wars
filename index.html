@@ -219,6 +219,7 @@
     <div class="board" id="menuBoard"></div>
     <a id="globalBoardLink" href="leaderboard.html" style="color:var(--accent);font-size:14px;text-decoration:none;margin-bottom:6px;">🌐 View Global Endless Leaderboard →</a>
     <div class="note">🌐 <span>Global leaderboard available in <b>Endless Run</b> mode only.</span></div>
+    <div class="note" id="pilotLine" style="display:none;">🚀 <span>Playing as <b id="pilotName">—</b> · <a id="changeName" href="#" style="color:var(--accent);">change</a></span></div>
     <div class="muted">33 waves · 11 bosses. Beat a boss to <b style="color:#fff">capture its attack</b> (8 uses). 🍗 level up · 🎁 points · ❤️ life.</div>
   </div>
 
@@ -259,6 +260,16 @@
       <button id="resumeBtn">RESUME</button>
       <button id="pauseHomeBtn" class="alt">🏠 MAIN MENU</button>
     </div>
+  </div>
+
+  <div id="nameAsk" class="overlay hidden">
+    <h1 style="font-size:clamp(26px,6vw,44px);">🏅 PILOT NAME</h1>
+    <div class="tag">Used on the 🌐 global Endless leaderboard. You can change it later.</div>
+    <div class="entry">
+      <input id="askName" maxlength="8" placeholder="AAA" autocomplete="off">
+      <button id="askOk">CONTINUE</button>
+    </div>
+    <div class="muted">Up to 8 characters.</div>
   </div>
 </div>
 
@@ -2122,12 +2133,34 @@
     !SUPABASE_URL.includes("YOURPROJECT") &&
     SUPABASE_ANON && SUPABASE_ANON !== "YOUR_ANON_PUBLIC_KEY";
 
+  // ---- Player identity (per browser) ----
+  // A stable hidden id lets the global board keep ONE best-score row per player
+  // (so the same name never piles up), while the name is set once and reused.
+  const PID_KEY = "cluck_player_id", NAME_KEY = "cluck_player_name";
+  function getPlayerId() {
+    let id = "";
+    try { id = localStorage.getItem(PID_KEY) || ""; } catch (e) {}
+    if (!id) {
+      id = (window.crypto && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : "p_" + Date.now().toString(36) + Math.random().toString(36).slice(2);
+      try { localStorage.setItem(PID_KEY, id); } catch (e) {}
+    }
+    return id;
+  }
+  function getPlayerName() {
+    try { return (localStorage.getItem(NAME_KEY) || "").toUpperCase(); } catch (e) { return ""; }
+  }
+  function setPlayerName(n) {
+    try { localStorage.setItem(NAME_KEY, n); } catch (e) {}
+  }
+
   // Fetch the global top-10 for Endless. Returns an array, or null on any failure.
   async function fetchGlobalBoard() {
     if (!supaEnabled()) return null;
     try {
       const url = `${SUPABASE_URL}/rest/v1/${ENDLESS_TABLE}` +
-                  `?select=name,score,wave&order=score.desc&limit=${LB_MAX}`;
+                  `?select=name,score,wave,player_id&order=score.desc&limit=${LB_MAX}`;
       const res = await fetch(url, {
         headers: { apikey: SUPABASE_ANON, Authorization: "Bearer " + SUPABASE_ANON },
       });
@@ -2137,19 +2170,22 @@
     } catch (e) { return null; }
   }
 
-  // Insert one Endless score. Returns true on success, false on any failure.
+  // Submit one Endless score via the submit_score RPC (insert-or-keep-best,
+  // keyed on the hidden player id). Returns true on success, false on failure.
   async function submitGlobalScore(entry) {
     if (!supaEnabled()) return false;
     try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/${ENDLESS_TABLE}`, {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/submit_score`, {
         method: "POST",
         headers: {
           apikey: SUPABASE_ANON,
           Authorization: "Bearer " + SUPABASE_ANON,
           "Content-Type": "application/json",
-          Prefer: "return=minimal",
         },
-        body: JSON.stringify({ name: entry.name, score: entry.score, wave: entry.wave }),
+        body: JSON.stringify({
+          p_id: getPlayerId(), p_name: entry.name,
+          p_score: entry.score, p_wave: entry.wave,
+        }),
       });
       return res.ok;
     } catch (e) { return false; }
@@ -2199,8 +2235,10 @@
                      '<div class="board-empty">Loading…</div>';
       const global = await fetchGlobalBoard();
       if (global) {
-        // re-find the player's row by matching name+score (server re-ranks)
-        el.innerHTML = boardRowsHtml(global, hi, "🌐 GLOBAL LEADERBOARD");
+        // highlight the player's own row by their hidden id (server re-ranks)
+        const myId = getPlayerId();
+        const mine = global.findIndex(r => r.player_id && r.player_id === myId);
+        el.innerHTML = boardRowsHtml(global, mine, "🌐 GLOBAL LEADERBOARD");
         return;
       }
       // offline fallback: local endless scores only
@@ -2220,7 +2258,11 @@
     const canEnter = pending.mode === "Endless" ? game.score > 0 : qualifies(game.score);
     if (canEnter) {
       entryEl.classList.remove("hidden");
-      if (nameEl) { nameEl.value = ""; setTimeout(() => nameEl.focus(), 50); }
+      if (nameEl) {
+        // Endless: pre-fill the remembered name so there's no retyping.
+        nameEl.value = pending.mode === "Endless" ? getPlayerName() : "";
+        setTimeout(() => { nameEl.focus(); nameEl.select(); }, 50);
+      }
     } else {
       entryEl.classList.add("hidden");
     }
@@ -2235,6 +2277,7 @@
     document.getElementById(which + "Entry").classList.add("hidden");
 
     if (mode === "Endless" && supaEnabled()) {
+      setPlayerName(nm);   // remember the name for next time (no retyping)
       const ok = await submitGlobalScore(entry);
       if (!ok) {
         // network failed — keep the score locally so it isn't lost
@@ -2288,6 +2331,7 @@
     stopBossMusic(); stopWaveMusic();
     show("menu");
     renderBoard("menuBoard", -1);
+    updatePilotLine();
   }
 
   // ---------- Loop ----------
@@ -2339,11 +2383,48 @@
     startWaveMusic();   // ambient backing track for the waves
   }
 
+  // ---- Pilot name: first-play prompt, remembered, changeable ----
+  let nameAskThen = null;   // optional callback to run once a name is chosen
+  function updatePilotLine() {
+    const line = document.getElementById("pilotLine");
+    const nm = getPlayerName();
+    if (nm) { document.getElementById("pilotName").textContent = nm; line.style.display = ""; }
+    else { line.style.display = "none"; }
+  }
+  function showNameAsk(then) {
+    nameAskThen = then || null;
+    const input = document.getElementById("askName");
+    input.value = getPlayerName();
+    state = STATE.MENU;
+    show("nameAsk");
+    setTimeout(() => { input.focus(); input.select(); }, 50);
+  }
+  function confirmNameAsk() {
+    const input = document.getElementById("askName");
+    const nm = (input.value || "").trim().toUpperCase().slice(0, 8);
+    if (!nm) { input.focus(); return; }   // a name is required to continue
+    setPlayerName(nm);
+    updatePilotLine();
+    const then = nameAskThen; nameAskThen = null;
+    if (then) then(); else show("menu");
+  }
+  function beginEndless() {
+    ac();
+    if (!getPlayerName()) { showNameAsk(() => start(true)); return; }   // first time only
+    start(true);
+  }
+
   document.querySelectorAll("#diffBtns button").forEach(b =>
     b.onclick = () => setDifficulty(b.dataset.diff));
   setDifficulty(difficulty);   // reflect saved/default selection in the UI
   document.getElementById("startBtn").onclick   = () => { ac(); start(false); };
-  document.getElementById("endlessBtn").onclick = () => { ac(); start(true); };
+  document.getElementById("endlessBtn").onclick = () => beginEndless();
+  document.getElementById("askOk").onclick = () => confirmNameAsk();
+  document.getElementById("askName").addEventListener("keydown", e => {
+    if (e.code === "Enter") { e.preventDefault(); confirmNameAsk(); }
+    else if (e.code === "Escape") { e.preventDefault(); nameAskThen = null; show("menu"); }
+  });
+  document.getElementById("changeName").onclick = (e) => { e.preventDefault(); ac(); showNameAsk(null); };
   document.getElementById("againBtn").onclick   = () => start(game.endless);
   document.getElementById("winBtn").onclick     = () => start(game.endless);
   document.getElementById("resumeBtn").onclick   = () => togglePause();
@@ -2363,6 +2444,7 @@
   // allow Enter/Space to start from menu/over screens (but not while typing a name)
   addEventListener("keydown", e => {
     if (e.target && e.target.tagName === "INPUT") return;
+    if (!document.getElementById("nameAsk").classList.contains("hidden")) return;  // name dialog open
     if ((e.code === "Enter" || e.code === "Space") &&
         (state === STATE.MENU || state === STATE.OVER || state === STATE.WIN)) {
       ac(); start(state === STATE.MENU ? false : (game && game.endless));
@@ -2372,6 +2454,7 @@
   // boot with a dummy game so menu has stars
   newGame(); state = STATE.MENU; show("menu");
   renderBoard("menuBoard", -1);
+  updatePilotLine();
   loop();
 })();
 </script>
