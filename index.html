@@ -68,6 +68,35 @@
     margin-bottom: 6px;
   }
   .tag { color: #9aa7c7; margin-bottom: 28px; font-size: 16px; }
+  /* Hero logo (the game icon) on the main menu */
+  .hero-logo {
+    width: min(340px, 74vw);
+    image-rendering: pixelated;            /* keep the crisp pixel-art look */
+    border-radius: 24px;
+    margin-bottom: 14px;
+    filter: drop-shadow(0 0 30px rgba(255,210,63,0.35))
+            drop-shadow(0 8px 24px rgba(0,0,0,0.6));
+    animation: heroFloat 4s ease-in-out infinite;
+  }
+  @keyframes heroFloat {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-8px); }
+  }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+  }
+  /* small accent note (e.g. leaderboard availability) */
+  .note {
+    color: #9aa7c7; font-size: 12.5px; margin-bottom: 22px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .note b { color: var(--accent); }
+  #globalBoardLink:hover { text-decoration: underline; }
+  @media (max-width: 560px), (max-height: 760px) {
+    .hero-logo { width: min(260px, 64vw); margin-bottom: 10px; }
+    .note { font-size: 11.5px; margin-bottom: 14px; }
+  }
   .keys {
     color: #c8d2ee; line-height: 1.9; font-size: 15px;
     background: rgba(255,255,255,0.05);
@@ -163,7 +192,8 @@
   <canvas id="game"></canvas>
 
   <div id="menu" class="overlay">
-    <h1>🐔 SPACE DOOM: CHICKEN WARS</h1>
+    <img class="hero-logo" src="icon-512.png" alt="SPACE DOOM: CHICKEN WARS" draggable="false">
+    <h1 class="sr-only">SPACE DOOM: CHICKEN WARS</h1>
     <div class="tag">A galactic poultry uprising. Defend the cosmos.</div>
     <div class="keys">
       <div><b>← →</b> or <b>A / D</b> &nbsp; move &nbsp;·&nbsp; <b>↑ ↓</b> or <b>W / S</b> &nbsp; nudge</div>
@@ -187,7 +217,9 @@
       <button id="endlessBtn" class="alt">ENDLESS RUN</button>
     </div>
     <div class="board" id="menuBoard"></div>
-    <div class="muted">30 waves · 10 bosses. Beat a boss to <b style="color:#fff">capture its attack</b> (8 uses). 🍗 level up · 🎁 points · ❤️ life.</div>
+    <a id="globalBoardLink" href="leaderboard.html" style="color:var(--accent);font-size:14px;text-decoration:none;margin-bottom:6px;">🌐 View Global Endless Leaderboard →</a>
+    <div class="note">🌐 <span>Global leaderboard available in <b>Endless Run</b> mode only.</span></div>
+    <div class="muted">33 waves · 11 bosses. Beat a boss to <b style="color:#fff">capture its attack</b> (8 uses). 🍗 level up · 🎁 points · ❤️ life.</div>
   </div>
 
   <div id="over" class="overlay hidden">
@@ -342,6 +374,73 @@
     win:    () => { beep(523,0.15,"sine",0.08); setTimeout(()=>beep(659,0.15,"sine",0.08),140); setTimeout(()=>beep(784,0.25,"sine",0.08),300); },
   };
 
+  // ---------- Boss battle music (synthesized guitar riff — 100% original, no samples) ----------
+  // A single plucked, palm-muted electric-guitar note built from oscillators.
+  const bossMusic = { on: false, step: 0, timer: null };
+  function guitarPluck(freq, dur) {
+    if (muted || state !== STATE.PLAY || !freq) return;
+    try {
+      const a = ac(), t = a.currentTime;
+      const filt = a.createBiquadFilter();
+      filt.type = "lowpass";
+      filt.frequency.setValueAtTime(2000, t);
+      filt.frequency.exponentialRampToValueAtTime(500, t + dur);   // pluck "twang" decay
+      const g = a.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.11, t + 0.008);        // fast attack
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      const o1 = a.createOscillator(); o1.type = "sawtooth"; o1.frequency.value = freq;
+      const o2 = a.createOscillator(); o2.type = "square";   o2.frequency.value = freq * 2.01;
+      const g2 = a.createGain(); g2.gain.value = 0.35;            // octave shimmer
+      o1.connect(filt); o2.connect(g2).connect(filt);
+      filt.connect(g).connect(a.destination);
+      o1.start(t); o2.start(t); o1.stop(t + dur); o2.stop(t + dur);
+    } catch (e) {}
+  }
+  // Driving E-minor pentatonic riff; one entry per eighth note (0 = rest).
+  const BOSS_RIFF = [
+    82.41, 82.41, 98.00, 82.41, 110.00, 82.41, 98.00, 0,
+    82.41, 82.41, 98.00, 110.00, 123.47, 110.00, 98.00, 0,
+    146.83, 0, 123.47, 0, 110.00, 98.00, 82.41, 0,
+    82.41, 98.00, 110.00, 123.47, 146.83, 164.81, 123.47, 0,
+  ];
+  const RIFF_STEP = 150;   // ms per eighth note (~100 BPM)
+  // Palm-muted bass "chug" — short, dark, percussive root note for the downbeats.
+  function bassChug(freq, dur) {
+    if (muted || state !== STATE.PLAY || !freq) return;
+    try {
+      const a = ac(), t = a.currentTime;
+      const filt = a.createBiquadFilter();
+      filt.type = "lowpass"; filt.frequency.setValueAtTime(280, t);   // muffled = "muted" string
+      const g = a.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.16, t + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      const o = a.createOscillator(); o.type = "square"; o.frequency.value = freq;
+      o.connect(filt).connect(g).connect(a.destination);
+      o.start(t); o.stop(t + dur);
+    } catch (e) {}
+  }
+  function bossMusicStep() {
+    if (!bossMusic.on) return;
+    const i = bossMusic.step % BOSS_RIFF.length;
+    guitarPluck(BOSS_RIFF[i], RIFF_STEP / 1000 * 0.95);
+    if (i % 4 === 0) bassChug(41.20, 0.12);   // low E chug on every downbeat
+    bossMusic.step++;
+    // Tempo drives faster once Desperado is enraged (low HP).
+    const enraged = game.boss && game.boss.variant === "guitar" && game.boss.enraged;
+    bossMusic.timer = setTimeout(bossMusicStep, enraged ? RIFF_STEP * 0.72 : RIFF_STEP);
+  }
+  function startBossMusic() {
+    if (bossMusic.on) return;
+    bossMusic.on = true; bossMusic.step = 0;
+    bossMusicStep();
+  }
+  function stopBossMusic() {
+    bossMusic.on = false;
+    if (bossMusic.timer) { clearTimeout(bossMusic.timer); bossMusic.timer = null; }
+  }
+
   // ---------- Helpers ----------
   const rand = (a, b) => a + Math.random() * (b - a);
   const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -381,7 +480,7 @@
       b.classList.toggle("sel", b.dataset.diff === d));
   }
 
-  const TOTAL_WAVES = 30;          // boss every 3rd wave -> 10 unique bosses
+  const TOTAL_WAVES = 33;          // boss every 3rd wave -> 11 unique bosses (Desperado at wave 33)
   let game;
 
   // ---------- Weapons ----------
@@ -409,7 +508,12 @@
     { name: "Ashen Field",    top: "#0c0c0e", bot: "#181820", nebula: "#888090", star: "#d8d8e8" },
     { name: "Golden Core",    top: "#120e02", bot: "#2a2004", nebula: "#ffc83c", star: "#fff0b8" },
   ];
-  function theme() { return THEMES[(game.wave - 1) % THEMES.length] || THEMES[0]; }
+  // Dedicated "badass" backdrop for Desperado's final showdown.
+  const THEME_FINAL = { name: "DESPERADO'S LAST STAND", top: "#0a0001", bot: "#26060a", nebula: "#ff2a16", star: "#ffcaa6", epic: true };
+  function theme() {
+    if (game.wave === TOTAL_WAVES) return THEME_FINAL;   // final boss wave
+    return THEMES[(game.wave - 1) % THEMES.length] || THEMES[0];
+  }
 
   function newGame(endless = false) {
     game = {
@@ -420,6 +524,7 @@
       special: null, specialCD: 0,   // captured boss attack (limited ammo)
       combo: 0, mult: 1, comboTimer: 0, bestCombo: 0, grazes: 0,  // combo / graze system
       intro: null, flash: null,       // boss intro card & screen-flash effects
+      silence: 0,                      // Desperado symphony: blocks player fire while > 0
       player: { x: W/2, y: H - 120, r: 20, cool: 0, inv: 0, speed: 6 },
       bullets: [], enemies: [], eggs: [], powerups: [], particles: [], floats: [],
       stars: Array.from({length: 90}, () => ({ x: rand(0,W), y: rand(0,H), z: rand(0.3,1.6) })),
@@ -434,7 +539,7 @@
     if (game.wave > TOTAL_WAVES && !game.endless) { winGame(); return; }
     game.waveActive = true;
     const w = game.wave;
-    const isBoss = (w % 3 === 0);   // boss every 3rd wave -> 10 bosses over 30 waves
+    const isBoss = (w % 3 === 0);   // boss every 3rd wave -> 11 bosses over 33 waves
 
     // Unlock new weapons as you progress.
     const unlockAt = { 1: 2, 2: 5, 3: 8 };   // type index -> wave it unlocks
@@ -458,17 +563,22 @@
       const spacingX = (W - 80) / cols;
       const spacingY = 64;
       const offX = (W - (cols-1)*spacingX) / 2;
+      // From wave 6 on, some chickens are volatile — they detonate into a
+      // radial burst of eggs when destroyed or when they reach the player.
+      const exploderChance = w >= 6 ? Math.min(0.35, 0.12 + (w - 6) * 0.03) : 0;
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
+          const exploder = Math.random() < exploderChance;
           game.enemies.push({
             x: offX + c*spacingX,
             y: -120 - r*spacingY,
             homeX: offX + c*spacingX,
-            r: 22, hp, maxHp: hp,
+            r: exploder ? 24 : 22, hp: exploder ? hp + 1 : hp, maxHp: exploder ? hp + 1 : hp,
             wobble: rand(0, Math.PI*2),
             col: c, row: r,
             shootCD: rand(60, 240),
             type: "chicken",
+            exploder,
           });
         }
       }
@@ -489,20 +599,28 @@
     { variant: "shoggoth", name: "THE SHOGGOTH",     color: "#9b6cff", r: 74, icon: "👁️" },
     { variant: "prism",    name: "PRISM ENTITY",     color: "#66f0ff", r: 64, icon: "🔷" },
     { variant: "elder",    name: "THE ELDER EGG",    color: "#ff4d6d", r: 80, icon: "🌌" },
+    { variant: "guitar",   name: "DESPERADO",        color: "#ff9e2c", r: 76, icon: "🎸" },
   ];
   function spawnBoss(w) {
     const bossIndex = Math.floor(w / 3) - 1;             // 3->0, 6->1, ... 30->9
     const def = BOSS_TYPES[bossIndex % BOSS_TYPES.length];
-    const hp = 100 + bossIndex * 60 + w * 12;
+    // Bosses get tougher every boss wave: more HP and faster, harder-hitting attacks.
+    let hp = 160 + bossIndex * 130 + w * 28;
+    if (def.variant === "guitar") hp = Math.round(hp * 1.8);   // Desperado is much harder to kill
+    const fireMul = Math.max(0.45, 1 - w * 0.025);   // shoot cooldowns shrink with wave
+    const speedMul2 = 1 + w * 0.03;                   // movement/sweep speed grows with wave
     game.boss = {
       x: W/2, y: -180, r: def.r, hp, maxHp: hp,
       vx: 1.8, t: 0, shootCD: 60, type: "boss",
       variant: def.variant, name: def.name, color: def.color, icon: def.icon,
       entering: true, phase: 0, enraged: false,
+      fireMul, speedMul: speedMul2,
+      healed: false, silenceUsed: false,   // Desperado: one-time heal + silence symphony
     };
     game.enemies.push(game.boss);
     game.intro = { name: def.name, icon: def.icon, color: def.color, t: 150, max: 150 };
     game.flash = { color: def.color, t: 16 };
+    if (def.variant === "guitar") startBossMusic();   // Desperado's theme
   }
 
   // ---------- Spawning effects ----------
@@ -528,6 +646,7 @@
   // ---------- Shooting ----------
   function playerShoot() {
     const p = game.player;
+    if (game.silence > 0) return;   // silenced by Desperado's symphony
     if (p.cool > 0) return;
     const lvl = game.weapon;
     const wt = WEAPONS[game.weaponType];
@@ -625,6 +744,7 @@
     if (keys.Space || mouseDown) playerShoot();
     if (p.cool > 0) p.cool--;
     if (p.inv > 0)  p.inv--;
+    if (game.silence > 0) game.silence--;
 
     // bullets
     for (let i = game.bullets.length - 1; i >= 0; i--) {
@@ -799,7 +919,7 @@
       return;
     }
     const p = game.player;
-    e.shootCD--;
+    e.shootCD -= e.fireMul ? 1 / e.fireMul : 1;   // higher waves drain the cooldown faster
     const rage = e.hp < e.maxHp * 0.4;   // second phase: faster & angrier
     if (rage && !e.enraged) {             // dramatic phase transition
       e.enraged = true;
@@ -946,6 +1066,53 @@
         e.shootCD = rage ? 36 : 56;
       }
 
+    } else if (e.variant === "guitar") {
+      // DESPERADO — a guitar that blows silencing symphonies and refuses to die.
+      e.x = W/2 + Math.sin(e.t * 0.022) * (W*0.30) * e.speedMul;
+      e.y = 150 + Math.sin(e.t * 0.05) * 22;
+
+      // One-time second wind: when nearly dead, he heals back up to half HP.
+      if (!e.healed && e.hp < e.maxHp * 0.15) {
+        e.healed = true;
+        e.hp = Math.round(e.maxHp * 0.5);
+        game.shake = 24;
+        game.flash = { color: "#ff9e2c", t: 26 };
+        floatText(e.x, e.y - e.r - 24, "🎸 ENCORE! 🎸", "#ffd23f", 110);
+        sfx.boss();
+      }
+
+      // First symphony (on his debut) silences the player's guns for 10 seconds.
+      if (!e.silenceUsed && e.t > 40) {
+        e.silenceUsed = true;
+        game.silence = 600;   // ~10s at 60fps
+        game.shake = 18;
+        game.flash = { color: "#ff9e2c", t: 22 };
+        floatText(W/2, H*0.5, "♫ SILENCING SYMPHONY ♫", "#ff9e2c", 130);
+        floatText(W/2, H*0.5 + 34, "guns jammed for 10s!", "#fff", 130);
+        sfx.boss();
+        // a sweeping wall of notes accompanies the riff
+        for (let k = 0; k < 16; k++) {
+          const ang = k * (Math.PI*2/16);
+          bossEgg(e.x, e.y, Math.cos(ang)*3.6, Math.sin(ang)*3.6, 9, "#ffd23f");
+        }
+      }
+
+      if (e.shootCD <= 0) {
+        e.phase = (e.phase + 1) % 2;
+        if (e.phase === 0) {                 // strummed fan of notes
+          const n = rage ? 11 : 7;
+          for (let k = 0; k < n; k++) {
+            const ang = (-0.5 + k/(n-1)) * 1.3;
+            bossEgg(e.x, e.y + e.r*0.4, Math.sin(ang)*4, Math.cos(ang)*4 + 1.5, 9, "#ff9e2c");
+          }
+        } else {                             // aimed power chord
+          const a = aimAt(e, rage ? 6 : 4.5);
+          for (let s = -1; s <= 1; s++)
+            bossEgg(e.x, e.y, a.vx + s*1.4, a.vy, 10, "#ffd23f");
+        }
+        e.shootCD = rage ? 26 : 42;
+      }
+
     } else { // elder — final boss: cycles through every attack
       e.x = W/2 + Math.sin(e.t * 0.02) * (W*0.22);
       e.y = 160 + Math.sin(e.t * 0.035) * 26;
@@ -997,6 +1164,7 @@
     game.enemies.splice(idx, 1);
     if (e.type === "boss") {
       game.boss = null;
+      stopBossMusic();
       explode(e.x, e.y, "#ff5b6e", 60, 9);
       explode(e.x, e.y, "#ffd23f", 40, 6);
       game.shake = 22;
@@ -1009,6 +1177,19 @@
       floatText(W/2, H/2 + 34, isTouch ? "tap ★ to unleash (×8)" : "press E to unleash (×8)", "#fff", 130);
       // big loot
       for (let k = 0; k < 4; k++) dropLoot(e.x + rand(-40,40), e.y);
+    } else if (e.exploder) {
+      explode(e.x, e.y, "#ff6b3c", 26, 7);
+      game.shake = Math.max(game.shake, 8);
+      sfx.boss();
+      // radial spray of eggs outward — a parting shot the player must dodge
+      const n = 10;
+      for (let k = 0; k < n; k++) {
+        const ang = k * (Math.PI * 2 / n);
+        game.eggs.push({ x: e.x, y: e.y, r: 8, vx: Math.cos(ang) * 3.4, vy: Math.sin(ang) * 3.4 });
+      }
+      bumpCombo();
+      addScore(70, e.x, e.y, "#ff9a44");
+      dropLoot(e.x, e.y);
     } else {
       explode(e.x, e.y, "#ffe08a", 18, 5);
       bumpCombo();
@@ -1109,8 +1290,13 @@
       game.score += 300;
       floatText(pu.x, pu.y, "+300", "#ffd23f", 60);
     } else if (pu.kind === "life") {
-      game.lives++;
-      floatText(pu.x, pu.y, "+1 LIFE", "#ff8fa3", 60);
+      if (game.lives < 5) {
+        game.lives++;
+        floatText(pu.x, pu.y, "+1 LIFE", "#ff8fa3", 60);
+      } else {
+        game.score += 100;   // already at max lives — award points instead
+        floatText(pu.x, pu.y, "MAX LIVES +100", "#ff8fa3", 60);
+      }
     }
   }
 
@@ -1130,6 +1316,79 @@
   }
 
   // ---------- Draw ----------
+  // Badass backdrop for the final boss: molten stage, spotlights, embers, lightning.
+  function drawEpicBg(nt) {
+    const beat = Math.pow(Math.max(0, Math.sin(nt * 3.0)), 6);   // sharp pulse "to the music"
+
+    // sweeping concert spotlight beams from the top corners
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (let s = -1; s <= 1; s += 2) {
+      const sway = Math.sin(nt * 0.7 * s) * 0.5;
+      const ox = s < 0 ? W * 0.18 : W * 0.82;
+      ctx.save();
+      ctx.translate(ox, -20);
+      ctx.rotate(sway + (s < 0 ? 0.5 : -0.5));
+      const bg = ctx.createLinearGradient(0, 0, 0, H * 1.2);
+      bg.addColorStop(0, "rgba(255,120,40,0.22)");
+      bg.addColorStop(1, "transparent");
+      ctx.fillStyle = bg;
+      ctx.beginPath();
+      ctx.moveTo(0, 0); ctx.lineTo(-70, H * 1.2); ctx.lineTo(70, H * 1.2);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+
+    // pulsing crimson nebula core (throbs with the beat)
+    const cx = W / 2 + Math.sin(nt * 0.15) * 40, cy = H * 0.32;
+    const rad = 240 + beat * 60;
+    const rg = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
+    rg.addColorStop(0, "rgba(255,60,30,0.30)");
+    rg.addColorStop(0.5, "rgba(150,20,40,0.16)");
+    rg.addColorStop(1, "transparent");
+    ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+
+    // molten horizon glow rising from the bottom (the stage is on fire)
+    const hg = ctx.createLinearGradient(0, H, 0, H * 0.55);
+    hg.addColorStop(0, "rgba(255,90,20," + (0.45 + beat * 0.3).toFixed(3) + ")");
+    hg.addColorStop(0.5, "rgba(180,30,20,0.18)");
+    hg.addColorStop(1, "transparent");
+    ctx.fillStyle = hg; ctx.fillRect(0, H * 0.55, W, H * 0.45);
+
+    // rising embers
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = 0; i < 46; i++) {
+      const ex = (i * 71) % W + Math.sin(nt * 0.6 + i) * 16;
+      const ey = H - ((nt * 46 + i * 53) % (H + 40));
+      const sz = 1 + (i % 3);
+      ctx.globalAlpha = 0.25 + (Math.sin(nt * 2 + i) * 0.5 + 0.5) * 0.5;
+      ctx.fillStyle = i % 4 ? "#ff7a2e" : "#ffd23f";
+      ctx.fillRect(ex, ey, sz, sz);
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+
+    // occasional crimson lightning flicker
+    const flick = Math.sin(nt * 11.3) * Math.sin(nt * 4.7);
+    if (flick > 0.93) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(255,120,90,0.7)"; ctx.lineWidth = 2;
+      ctx.shadowColor = "#ff5b3a"; ctx.shadowBlur = 16;
+      const startX = W * (0.2 + (nt % 1) * 0.6);
+      ctx.beginPath(); ctx.moveTo(startX, 0);
+      let lx = startX, ly = 0;
+      while (ly < H * 0.6) {
+        lx += rand(-40, 40); ly += rand(40, 80);
+        ctx.lineTo(lx, ly);
+      }
+      ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = "rgba(255,90,60,0.06)"; ctx.fillRect(0, 0, W, H);
+    }
+  }
+
   function draw() {
     ctx.clearRect(0, 0, W, H);
 
@@ -1138,17 +1397,21 @@
     const grad = ctx.createLinearGradient(0, 0, 0, H);
     grad.addColorStop(0, th.top); grad.addColorStop(1, th.bot);
     ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
-    // drifting nebula blobs
     const nt = performance.now() / 1000;
-    ctx.globalAlpha = 0.18;
-    for (let i = 0; i < 3; i++) {
-      const bx = (W*0.2 + i*W*0.3 + Math.sin(nt*0.1 + i)*60);
-      const by = (H*0.3 + Math.cos(nt*0.08 + i*2)*50 + i*60);
-      const rg = ctx.createRadialGradient(bx, by, 0, bx, by, 260);
-      rg.addColorStop(0, th.nebula); rg.addColorStop(1, "transparent");
-      ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+    if (th.epic) {
+      drawEpicBg(nt);
+    } else {
+      // drifting nebula blobs
+      ctx.globalAlpha = 0.18;
+      for (let i = 0; i < 3; i++) {
+        const bx = (W*0.2 + i*W*0.3 + Math.sin(nt*0.1 + i)*60);
+        const by = (H*0.3 + Math.cos(nt*0.08 + i*2)*50 + i*60);
+        const rg = ctx.createRadialGradient(bx, by, 0, bx, by, 260);
+        rg.addColorStop(0, th.nebula); rg.addColorStop(1, "transparent");
+        ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+      }
+      ctx.globalAlpha = 1;
     }
-    ctx.globalAlpha = 1;
 
     ctx.save();
     if (game && game.shake > 0.5) ctx.translate(rand(-game.shake,game.shake), rand(-game.shake,game.shake));
@@ -1316,11 +1579,17 @@
     ctx.save();
     ctx.translate(e.x, e.y);
     const wob = Math.sin(e.wobble*2) * 3;
+    // volatile (exploding) chickens glow an angry orange and pulse
+    if (e.exploder) {
+      ctx.shadowColor = "#ff5a1e";
+      ctx.shadowBlur = 12 + Math.sin(e.wobble * 4) * 6;
+    }
     // body
-    ctx.fillStyle = "#fff";
+    ctx.fillStyle = e.exploder ? "#ffb37a" : "#fff";
     ctx.beginPath(); ctx.ellipse(0, 4, e.r*0.85, e.r*0.78, 0, 0, Math.PI*2); ctx.fill();
     // head
     ctx.beginPath(); ctx.arc(0, -e.r*0.55, e.r*0.5, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
     // comb
     ctx.fillStyle = "#ff5b6e";
     ctx.beginPath();
@@ -1361,6 +1630,7 @@
     else if (e.variant === "shoggoth")  drawBossShoggoth(e);
     else if (e.variant === "prism")     drawBossPrism(e);
     else if (e.variant === "elder")     drawBossElder(e);
+    else if (e.variant === "guitar")    drawBossGuitar(e);
     else                                drawBossRooster(e);
     if (e.enraged) {                       // pulsing rage aura
       ctx.globalAlpha = 0.35 + Math.sin(e.t * 0.3) * 0.18;
@@ -1644,6 +1914,43 @@
     ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(0, -e.r*0.1, 4, 0, Math.PI*2); ctx.fill();
   }
 
+  function drawBossGuitar(e) {
+    const t = e.t * 0.1;
+    ctx.save();
+    ctx.rotate(Math.sin(e.t * 0.04) * 0.18);   // rocking to the beat
+    // body (rounded guitar shape)
+    ctx.shadowColor = e.color; ctx.shadowBlur = 26;
+    ctx.fillStyle = "#7a3b12";
+    ctx.beginPath(); ctx.ellipse(0, e.r*0.35, e.r*0.7, e.r*0.85, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = "#b5651d";
+    ctx.beginPath(); ctx.ellipse(0, e.r*0.35, e.r*0.55, e.r*0.68, 0, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    // sound hole
+    ctx.fillStyle = "#1a0d04";
+    ctx.beginPath(); ctx.arc(0, e.r*0.25, e.r*0.22, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = e.color;
+    ctx.beginPath(); ctx.arc(0, e.r*0.25, e.r*0.22, 0, Math.PI*2); ctx.lineWidth = 3; ctx.strokeStyle = e.color; ctx.stroke();
+    // neck + headstock
+    ctx.fillStyle = "#3a2207";
+    ctx.fillRect(-e.r*0.12, -e.r*1.15, e.r*0.24, e.r*1.2);
+    ctx.fillStyle = "#241405";
+    ctx.fillRect(-e.r*0.2, -e.r*1.35, e.r*0.4, e.r*0.24);
+    // strings
+    ctx.strokeStyle = "#ffe9b0"; ctx.lineWidth = 1.5;
+    for (let s = -2; s <= 2; s++) {
+      ctx.beginPath(); ctx.moveTo(s*e.r*0.04, -e.r*1.25); ctx.lineTo(s*e.r*0.04, e.r*0.9); ctx.stroke();
+    }
+    // pulsing musical notes radiating out
+    ctx.fillStyle = "#ffd23f"; ctx.font = "20px serif"; ctx.textAlign = "center";
+    for (let i = 0; i < 4; i++) {
+      const a = t + i * Math.PI/2;
+      ctx.globalAlpha = 0.5 + Math.sin(t*2 + i) * 0.4;
+      ctx.fillText("♪", Math.cos(a)*e.r*1.2, Math.sin(a)*e.r*1.2);
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
   function drawEmoji(em, x, y, size) {
     ctx.save();
     ctx.font = size + "px serif";
@@ -1654,6 +1961,14 @@
 
   function drawHUD() {
     ctx.save();
+    // silence (Desperado) warning + countdown
+    if (game.silence > 0) {
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillStyle = "#ff9e2c"; ctx.font = "bold 20px Segoe UI";
+      ctx.globalAlpha = 0.6 + Math.sin(game.silence * 0.3) * 0.4;
+      ctx.fillText("🎸 SILENCED — " + Math.ceil(game.silence / 60) + "s", W/2, H*0.74);
+      ctx.globalAlpha = 1;
+    }
     ctx.textAlign = "left"; ctx.textBaseline = "top";
     ctx.font = "bold 22px Segoe UI"; ctx.fillStyle = "#ffd23f";
     ctx.fillText("SCORE " + game.score, 20, 18);
@@ -1738,6 +2053,50 @@
     ctx.restore();
   }
 
+  // ---------- Supabase global leaderboard (Endless Run) ----------
+  // Paste your project's credentials here. Leave SUPABASE_URL empty to disable
+  // the online board entirely (Endless then just uses the local board).
+  const SUPABASE_URL  = "https://gehqhdfqvxfknktudwlj.supabase.co";
+  const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdlaHFoZGZxdnhma25rdHVkd2xqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIzODAxMDgsImV4cCI6MjA5Nzk1NjEwOH0.izYMaYVK6PeRiWlhA284bgsR2YshW4BqT1iva_Yntwc";
+  const ENDLESS_TABLE = "endless_scores";
+  const supaEnabled = () =>
+    SUPABASE_URL && SUPABASE_URL.startsWith("https://") &&
+    !SUPABASE_URL.includes("YOURPROJECT") &&
+    SUPABASE_ANON && SUPABASE_ANON !== "YOUR_ANON_PUBLIC_KEY";
+
+  // Fetch the global top-10 for Endless. Returns an array, or null on any failure.
+  async function fetchGlobalBoard() {
+    if (!supaEnabled()) return null;
+    try {
+      const url = `${SUPABASE_URL}/rest/v1/${ENDLESS_TABLE}` +
+                  `?select=name,score,wave&order=score.desc&limit=${LB_MAX}`;
+      const res = await fetch(url, {
+        headers: { apikey: SUPABASE_ANON, Authorization: "Bearer " + SUPABASE_ANON },
+      });
+      if (!res.ok) return null;
+      const rows = await res.json();
+      return Array.isArray(rows) ? rows.map(r => ({ ...r, mode: "Endless" })) : null;
+    } catch (e) { return null; }
+  }
+
+  // Insert one Endless score. Returns true on success, false on any failure.
+  async function submitGlobalScore(entry) {
+    if (!supaEnabled()) return false;
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/${ENDLESS_TABLE}`, {
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_ANON,
+          Authorization: "Bearer " + SUPABASE_ANON,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify({ name: entry.name, score: entry.score, wave: entry.wave }),
+      });
+      return res.ok;
+    } catch (e) { return false; }
+  }
+
   // ---------- Leaderboard (localStorage) ----------
   const LB_KEY = "cluck_leaderboard_v1";
   const LB_MAX = 10;
@@ -1757,11 +2116,8 @@
     const b = loadBoard();
     return b.length < LB_MAX || score > b[b.length - 1].score;
   }
-  function renderBoard(elId, hi) {
-    const el = document.getElementById(elId);
-    if (!el) return;
-    const board = loadBoard();
-    let html = "<h3>🏆 LEADERBOARD</h3>";
+  function boardRowsHtml(board, hi, title) {
+    let html = `<h3>${title}</h3>`;
     if (!board.length) {
       html += '<div class="board-empty">No scores yet — be the first!</div>';
     } else {
@@ -1773,40 +2129,80 @@
                 `<span class="sc">${e.score}</span><span class="wv">${m}</span></div>`;
       });
     }
-    el.innerHTML = html;
+    return html;
+  }
+  // Render a board. For Endless (with Supabase configured) this pulls the global
+  // top-10; otherwise (or on network failure) it shows the local board.
+  async function renderBoard(elId, hi, mode) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    if (mode === "Endless" && supaEnabled()) {
+      el.innerHTML = '<h3>🌐 GLOBAL LEADERBOARD</h3>' +
+                     '<div class="board-empty">Loading…</div>';
+      const global = await fetchGlobalBoard();
+      if (global) {
+        // re-find the player's row by matching name+score (server re-ranks)
+        el.innerHTML = boardRowsHtml(global, hi, "🌐 GLOBAL LEADERBOARD");
+        return;
+      }
+      // offline fallback: local endless scores only
+      const local = loadBoard().filter(e => e.mode === "Endless");
+      el.innerHTML = boardRowsHtml(local, hi, "🏆 LEADERBOARD (offline)");
+      return;
+    }
+    el.innerHTML = boardRowsHtml(loadBoard(), hi, "🏆 LEADERBOARD");
   }
   let pending = null;   // { score, wave, mode } awaiting a name
   function presentEndScreen(which) {
     pending = { score: game.score, wave: game.wave, mode: game.endless ? "Endless" : "Campaign" };
     const entryEl = document.getElementById(which + "Entry");
     const nameEl  = document.getElementById(which + "Name");
-    if (qualifies(game.score)) {
+    // Endless: the global server decides ranking, so always offer to submit a
+    // positive score. Campaign keeps the local "did you make the top 10?" gate.
+    const canEnter = pending.mode === "Endless" ? game.score > 0 : qualifies(game.score);
+    if (canEnter) {
       entryEl.classList.remove("hidden");
       if (nameEl) { nameEl.value = ""; setTimeout(() => nameEl.focus(), 50); }
     } else {
       entryEl.classList.add("hidden");
     }
-    renderBoard(which + "Board", -1);
+    renderBoard(which + "Board", -1, pending.mode);
   }
-  function saveScore(which) {
+  async function saveScore(which) {
     if (!pending) return;
     const nameEl = document.getElementById(which + "Name");
     let nm = ((nameEl && nameEl.value) || "YOU").trim().toUpperCase().slice(0, 8) || "YOU";
-    const board = loadBoard();
     const entry = { name: nm, score: pending.score, wave: pending.wave, mode: pending.mode, date: Date.now() };
+    const mode = pending.mode;
+    document.getElementById(which + "Entry").classList.add("hidden");
+
+    if (mode === "Endless" && supaEnabled()) {
+      const ok = await submitGlobalScore(entry);
+      if (!ok) {
+        // network failed — keep the score locally so it isn't lost
+        const board = loadBoard(); board.push(entry);
+        board.sort((a, b) => b.score - a.score); saveBoard(board.slice(0, LB_MAX));
+      }
+      pending = null;
+      renderBoard(which + "Board", -1, mode);   // server re-ranks; no "you" highlight
+      return;
+    }
+
+    // Campaign (or Supabase disabled): local board as before
+    const board = loadBoard();
     board.push(entry);
     board.sort((a, b) => b.score - a.score);
     const top = board.slice(0, LB_MAX);
     saveBoard(top);
     pending = null;
-    document.getElementById(which + "Entry").classList.add("hidden");
-    renderBoard(which + "Board", top.indexOf(entry));
+    renderBoard(which + "Board", top.indexOf(entry), mode);
     renderBoard("menuBoard", -1);
   }
 
   // ---------- Flow control ----------
   function gameOver() {
     state = STATE.OVER;
+    stopBossMusic();
     document.getElementById("finalScore").textContent = game.score;
     document.getElementById("finalWave").textContent = game.wave;
     document.getElementById("finalCombo").textContent = game.bestCombo;
@@ -1815,6 +2211,7 @@
   }
   function winGame() {
     state = STATE.WIN;
+    stopBossMusic();
     sfx.win();
     document.getElementById("winScore").textContent = game.score;
     presentEndScreen("win");
@@ -1830,6 +2227,7 @@
   }
   function goHome() {
     state = STATE.MENU;
+    stopBossMusic();
     show("menu");
     renderBoard("menuBoard", -1);
   }
@@ -1875,6 +2273,7 @@
 
   function start(endless = false) {
     pending = null;
+    stopBossMusic();
     newGame(endless);
     state = STATE.PLAY;
     show(null);

@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>🐔 SPACE DOOM — Global Leaderboard</title>
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root { --accent: #ffd23f; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { min-height: 100%; }
+  body {
+    background: #05060f;
+    color: #fff;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 32px 16px 70px;
+    position: relative;
+    overflow-x: hidden;
+  }
+  /* layered space backdrop */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: -2;
+    background:
+      radial-gradient(circle at 50% -10%, #14204e 0%, transparent 55%),
+      radial-gradient(circle at 85% 20%, rgba(168,50,70,0.25) 0%, transparent 40%),
+      radial-gradient(circle at 12% 70%, rgba(53,80,170,0.25) 0%, transparent 45%),
+      #05060f;
+  }
+  /* drifting starfield */
+  body::after {
+    content: ""; position: fixed; inset: 0; z-index: -1; opacity: 0.5;
+    background-image:
+      radial-gradient(1.5px 1.5px at 20% 30%, #aab8ff 99%, transparent),
+      radial-gradient(1.5px 1.5px at 70% 60%, #fff 99%, transparent),
+      radial-gradient(1px 1px at 40% 80%, #ffb3c0 99%, transparent),
+      radial-gradient(1px 1px at 90% 40%, #b8ffcf 99%, transparent),
+      radial-gradient(1.5px 1.5px at 55% 15%, #fff 99%, transparent),
+      radial-gradient(1px 1px at 10% 50%, #d9bcff 99%, transparent);
+    background-repeat: repeat; background-size: 300px 300px;
+    animation: drift 90s linear infinite;
+  }
+  @keyframes drift { from { background-position: 0 0; } to { background-position: 0 600px; } }
+
+  .hero-logo {
+    width: min(300px, 70vw);
+    image-rendering: pixelated;
+    border-radius: 24px;
+    margin-bottom: 12px;
+    filter: drop-shadow(0 0 30px rgba(255,210,63,0.35)) drop-shadow(0 8px 24px rgba(0,0,0,0.6));
+    animation: heroFloat 4s ease-in-out infinite;
+  }
+  @keyframes heroFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+  .sub {
+    color: var(--accent); font-size: 14px; letter-spacing: 2px; text-transform: uppercase;
+    margin-bottom: 22px; text-align: center; font-weight: 600;
+  }
+
+  .board {
+    width: min(480px, 94vw);
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 16px;
+    padding: 16px 16px 8px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06);
+    backdrop-filter: blur(4px);
+  }
+  .board h3 {
+    color: var(--accent); font-size: 15px; letter-spacing: 1px;
+    margin-bottom: 12px; text-align: center;
+  }
+  .board-row {
+    display: flex; align-items: center; gap: 12px;
+    font-size: 15px; color: #c8d2ee; padding: 11px 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-radius: 8px;
+  }
+  .board-row:last-child { border-bottom: none; }
+  .board-row .rank {
+    width: 34px; font-weight: 700; font-size: 16px; color: #7f8bad; text-align: center;
+    flex-shrink: 0;
+  }
+  /* podium glow for the top 3 */
+  .board-row.top1 { background: linear-gradient(90deg, rgba(255,210,63,0.16), transparent); }
+  .board-row.top2 { background: linear-gradient(90deg, rgba(216,216,232,0.12), transparent); }
+  .board-row.top3 { background: linear-gradient(90deg, rgba(255,154,82,0.12), transparent); }
+  .board-row.top1 .rank, .board-row.top1 .medal { color: #ffd23f; }
+  .board-row.top2 .rank, .board-row.top2 .medal { color: #d8d8e8; }
+  .board-row.top3 .rank, .board-row.top3 .medal { color: #ff9a52; }
+  .board-row .medal { font-size: 18px; }
+  .board-row .nm { flex: 1; color: #fff; font-weight: 700; text-align: left; letter-spacing: 1px; }
+  .board-row .sc { color: var(--accent); font-variant-numeric: tabular-nums; font-weight: 700; min-width: 78px; text-align: right; }
+  .board-row .wv { color: #7f8bad; font-size: 12px; width: 58px; text-align: right; flex-shrink: 0; }
+  .board-empty, .board-msg { color: #7f8bad; font-size: 14px; text-align: center; padding: 24px 0; }
+  .board-msg.err { color: #ff8fa3; }
+
+  .bar {
+    display: flex; gap: 12px; align-items: center; justify-content: space-between;
+    margin: 18px 0 4px; width: min(480px, 94vw);
+  }
+  button {
+    font: 600 14px "Segoe UI", sans-serif;
+    color: #06121f; background: var(--accent); border: none;
+    padding: 11px 24px; border-radius: 999px; cursor: pointer;
+    box-shadow: 0 6px 20px rgba(255,210,63,0.3);
+    transition: transform .08s ease, box-shadow .2s ease;
+  }
+  button:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(255,210,63,0.45); }
+  button:active { transform: translateY(0); }
+  .updated { color: #5b678a; font-size: 12px; }
+  a.play {
+    color: var(--accent); font-size: 14px; text-decoration: none; margin-top: 22px;
+    border: 2px solid rgba(255,210,63,0.4); border-radius: 999px; padding: 9px 22px;
+    transition: background .2s ease;
+  }
+  a.play:hover { background: rgba(255,210,63,0.12); }
+  @media (max-width: 560px) { .hero-logo { width: min(240px, 64vw); } }
+</style>
+</head>
+<body>
+  <img class="hero-logo" src="icon-512.png" alt="SPACE DOOM: CHICKEN WARS" draggable="false">
+  <div class="sub">★ Endless Run · Global Top 25 ★</div>
+
+  <div class="board" id="board">
+    <h3>🌐 GLOBAL LEADERBOARD</h3>
+    <div class="board-msg" id="status">Loading…</div>
+  </div>
+
+  <div class="bar">
+    <span class="updated" id="updated"></span>
+    <button id="refresh">↻ Refresh</button>
+  </div>
+
+  <a class="play" href="index.html">← Back to the game</a>
+
+<script>
+(() => {
+  "use strict";
+  const SUPABASE_URL  = "https://gehqhdfqvxfknktudwlj.supabase.co";
+  const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdlaHFoZGZxdnhma25rdHVkd2xqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIzODAxMDgsImV4cCI6MjA5Nzk1NjEwOH0.izYMaYVK6PeRiWlhA284bgsR2YshW4BqT1iva_Yntwc";
+  const TABLE = "endless_scores";
+  const LIMIT = 25;
+  const MEDALS = ["🥇", "🥈", "🥉"];
+
+  const boardEl = document.getElementById("board");
+  const updatedEl = document.getElementById("updated");
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+      ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+  }
+  function setStatus(msg, isErr) {
+    boardEl.innerHTML = '<h3>🌐 GLOBAL LEADERBOARD</h3>' +
+      `<div class="board-msg${isErr ? " err" : ""}">${esc(msg)}</div>`;
+  }
+  function render(rows) {
+    let html = '<h3>🌐 GLOBAL LEADERBOARD</h3>';
+    if (!rows.length) {
+      html += '<div class="board-empty">No scores yet — be the first!</div>';
+    } else {
+      rows.forEach((e, i) => {
+        const top = i < 3 ? " top" + (i + 1) : "";
+        const rank = i < 3 ? `<span class="medal">${MEDALS[i]}</span>` : (i + 1);
+        html += `<div class="board-row${top}">` +
+                `<span class="rank">${rank}</span>` +
+                `<span class="nm">${esc(e.name)}</span>` +
+                `<span class="sc">${Number(e.score).toLocaleString()}</span>` +
+                `<span class="wv">∞ W${esc(e.wave)}</span></div>`;
+      });
+    }
+    boardEl.innerHTML = html;
+  }
+
+  async function load() {
+    setStatus("Loading…", false);
+    try {
+      const url = `${SUPABASE_URL}/rest/v1/${TABLE}` +
+                  `?select=name,score,wave&order=score.desc&limit=${LIMIT}`;
+      const res = await fetch(url, {
+        headers: { apikey: SUPABASE_ANON, Authorization: "Bearer " + SUPABASE_ANON },
+      });
+      if (!res.ok) { setStatus("Couldn't load scores (server error " + res.status + ").", true); return; }
+      const rows = await res.json();
+      render(Array.isArray(rows) ? rows : []);
+      updatedEl.textContent = "Updated " + new Date().toLocaleTimeString();
+    } catch (e) {
+      setStatus("Couldn't reach the leaderboard — check your connection.", true);
+    }
+  }
+
+  document.getElementById("refresh").onclick = load;
+  load();
+  setInterval(load, 30000);   // auto-refresh every 30s
+})();
+</script>
+</body>
+</html>
