@@ -1,4 +1,4 @@
-const CACHE = "cluck-invaders-v10";
+const CACHE = "cluck-invaders-v11";
 const ASSETS = [
   "./",
   "./index.html",

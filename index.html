@@ -2156,17 +2156,24 @@
   }
 
   // Fetch the global top-10 for Endless. Returns an array, or null on any failure.
+  // Tolerant of a not-yet-migrated DB: if the player_id column is missing, it
+  // retries without it (so the board still shows instead of falling to offline).
   async function fetchGlobalBoard() {
     if (!supaEnabled()) return null;
-    try {
+    const get = async (sel) => {
       const url = `${SUPABASE_URL}/rest/v1/${ENDLESS_TABLE}` +
-                  `?select=name,score,wave,player_id&order=score.desc&limit=${LB_MAX}`;
+                  `?select=${sel}&order=score.desc&limit=${LB_MAX}`;
       const res = await fetch(url, {
         headers: { apikey: SUPABASE_ANON, Authorization: "Bearer " + SUPABASE_ANON },
       });
       if (!res.ok) return null;
       const rows = await res.json();
-      return Array.isArray(rows) ? rows.map(r => ({ ...r, mode: "Endless" })) : null;
+      return Array.isArray(rows) ? rows : null;
+    };
+    try {
+      let rows = await get("name,score,wave,player_id");
+      if (rows === null) rows = await get("name,score,wave");   // older DB w/o player_id
+      return rows ? rows.map(r => ({ ...r, mode: "Endless" })) : null;
     } catch (e) { return null; }
   }
 
@@ -2174,20 +2181,27 @@
   // keyed on the hidden player id). Returns true on success, false on failure.
   async function submitGlobalScore(entry) {
     if (!supaEnabled()) return false;
+    const H = {
+      apikey: SUPABASE_ANON,
+      Authorization: "Bearer " + SUPABASE_ANON,
+      "Content-Type": "application/json",
+    };
     try {
+      // Preferred path: the RPC keeps one best-score row per player_id.
       const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/submit_score`, {
-        method: "POST",
-        headers: {
-          apikey: SUPABASE_ANON,
-          Authorization: "Bearer " + SUPABASE_ANON,
-          "Content-Type": "application/json",
-        },
+        method: "POST", headers: H,
         body: JSON.stringify({
           p_id: getPlayerId(), p_name: entry.name,
           p_score: entry.score, p_wave: entry.wave,
         }),
       });
-      return res.ok;
+      if (res.ok) return true;
+      // Fallback (RPC not installed yet): plain insert so the score still saves.
+      const ins = await fetch(`${SUPABASE_URL}/rest/v1/${ENDLESS_TABLE}`, {
+        method: "POST", headers: { ...H, Prefer: "return=minimal" },
+        body: JSON.stringify({ name: entry.name, score: entry.score, wave: entry.wave }),
+      });
+      return ins.ok;
     } catch (e) { return false; }
   }
 
