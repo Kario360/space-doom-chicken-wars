@@ -441,6 +441,53 @@
     if (bossMusic.timer) { clearTimeout(bossMusic.timer); bossMusic.timer = null; }
   }
 
+  // ---------- Ambient wave music (synthesized, 100% original — no samples) ----------
+  // A calm, spacey arpeggio + soft sine bass that loops during normal play, so the
+  // waves have a pleasant backing track instead of bare buzzing weapon SFX.
+  // (Desperado / wave-33 keeps its own guitar theme — this is paused while that plays.)
+  const waveMusic = { on: false, step: 0, timer: null };
+  function waveNote(freq, dur, type, vol) {
+    if (muted || state !== STATE.PLAY || !freq) return;
+    try {
+      const a = ac(), t = a.currentTime;
+      const filt = a.createBiquadFilter();
+      filt.type = "lowpass"; filt.frequency.value = 2600;   // soften the tone (no harsh buzz)
+      const g = a.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(vol, t + 0.04);    // gentle attack
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);  // smooth decay
+      const o = a.createOscillator();
+      o.type = type; o.frequency.value = freq;
+      o.connect(filt).connect(g).connect(a.destination);
+      o.start(t); o.stop(t + dur);
+    } catch (e) {}
+  }
+  // A-minor pentatonic arpeggio; [arpeggio note, bass note (0 = no bass this step)].
+  const WAVE_STEP = 250;   // ms per step (~ relaxed pulse)
+  const WAVE_PATTERN = [
+    [440.00, 110.00], [523.25, 0     ], [659.25, 0     ], [880.00, 0     ],
+    [659.25, 146.83], [523.25, 0     ], [587.33, 0     ], [440.00, 0     ],
+    [392.00, 98.00 ], [523.25, 0     ], [659.25, 0     ], [783.99, 0     ],
+    [659.25, 130.81], [523.25, 0     ], [493.88, 0     ], [392.00, 0     ],
+  ];
+  function waveMusicStep() {
+    if (!waveMusic.on) return;
+    const [arp, bass] = WAVE_PATTERN[waveMusic.step % WAVE_PATTERN.length];
+    waveNote(arp, WAVE_STEP / 1000 * 1.6, "triangle", 0.035);     // melody (quiet, mellow)
+    if (bass) waveNote(bass, WAVE_STEP / 1000 * 3.2, "sine", 0.05); // soft pad bass on downbeats
+    waveMusic.step++;
+    waveMusic.timer = setTimeout(waveMusicStep, WAVE_STEP);
+  }
+  function startWaveMusic() {
+    if (waveMusic.on || bossMusic.on) return;   // don't fight the Desperado theme
+    waveMusic.on = true; waveMusic.step = 0;
+    waveMusicStep();
+  }
+  function stopWaveMusic() {
+    waveMusic.on = false;
+    if (waveMusic.timer) { clearTimeout(waveMusic.timer); waveMusic.timer = null; }
+  }
+
   // ---------- Helpers ----------
   const rand = (a, b) => a + Math.random() * (b - a);
   const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -620,7 +667,7 @@
     game.enemies.push(game.boss);
     game.intro = { name: def.name, icon: def.icon, color: def.color, t: 150, max: 150 };
     game.flash = { color: def.color, t: 16 };
-    if (def.variant === "guitar") startBossMusic();   // Desperado's theme
+    if (def.variant === "guitar") { stopWaveMusic(); startBossMusic(); }   // Desperado's theme
   }
 
   // ---------- Spawning effects ----------
@@ -1165,6 +1212,7 @@
     if (e.type === "boss") {
       game.boss = null;
       stopBossMusic();
+      if (e.variant === "guitar") startWaveMusic();   // Desperado down — resume ambient track
       explode(e.x, e.y, "#ff5b6e", 60, 9);
       explode(e.x, e.y, "#ffd23f", 40, 6);
       game.shake = 22;
@@ -2202,7 +2250,7 @@
   // ---------- Flow control ----------
   function gameOver() {
     state = STATE.OVER;
-    stopBossMusic();
+    stopBossMusic(); stopWaveMusic();
     document.getElementById("finalScore").textContent = game.score;
     document.getElementById("finalWave").textContent = game.wave;
     document.getElementById("finalCombo").textContent = game.bestCombo;
@@ -2211,7 +2259,7 @@
   }
   function winGame() {
     state = STATE.WIN;
-    stopBossMusic();
+    stopBossMusic(); stopWaveMusic();
     sfx.win();
     document.getElementById("winScore").textContent = game.score;
     presentEndScreen("win");
@@ -2227,7 +2275,7 @@
   }
   function goHome() {
     state = STATE.MENU;
-    stopBossMusic();
+    stopBossMusic(); stopWaveMusic();
     show("menu");
     renderBoard("menuBoard", -1);
   }
@@ -2278,6 +2326,7 @@
     state = STATE.PLAY;
     show(null);
     if (actx && actx.state === "suspended") actx.resume();
+    startWaveMusic();   // ambient backing track for the waves
   }
 
   document.querySelectorAll("#diffBtns button").forEach(b =>
